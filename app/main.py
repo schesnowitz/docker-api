@@ -3,6 +3,9 @@ from fastapi.params import Body
 from pydantic import BaseModel
 from typing import Optional
 from random import randrange
+import psycopg2
+from psycopg2.extras import RealDictCursor
+import time
 
 class Post(BaseModel):
     title: str
@@ -12,6 +15,25 @@ class Post(BaseModel):
 
 fake_post_data = [{"title": "working with FastApi", "content": "Fast api is cool", "id":1, "published":True},
          {"title": "Get a job", "content": "gotta get a job", "id":2},]
+
+
+connected = False
+while connected == False:
+    try:
+        conn = psycopg2.connect(host="containers-us-west-70.railway.app", 
+                            database="railway", 
+                            user="postgres", 
+                            password="HlpSP7uPQLai4gq0TNnA",  
+                            port="6484", 
+                            cursor_factory=RealDictCursor)
+        cursor = conn.cursor()
+        print("Connected To Postgres!")
+        connected = True
+    except Exception as e:
+        print(f"Connection failed with this error ->: {e} Trying again in 3 seconds...")
+        time.sleep(3)
+
+
 
 def get_single_post_by_id(id):
     for post in fake_post_data:
@@ -28,43 +50,35 @@ app = FastAPI()
 # uvicorn main:app --reload
 
 
-@app.get("/")
-# async def root():
-def root():
-    return {'posts': fake_post_data}
+# @app.get("/")
+# # async def root():
+# def root():
+#     return {'posts': fake_post_data}
 
 
-@app.get("/posts/")
-# async def root():
+@app.get("/posts")
 def get_all_posts():
-    return {"data": "This is a post 1"}
+
+    cursor.execute(""" SELECT * FROM posts """)  
+    posts = cursor.fetchall()
+    print(posts)
+    return {"data": posts} 
 
  
 @app.post("/posts", status_code=status.HTTP_201_CREATED) 
-# async def root():
 def create_post(post:Post):
-    # print(post.rating)
-    print(post.model_dump())
-    post_dict = post.model_dump()
-    post_dict['id'] = randrange(0, 1000000000)
-    fake_post_data.append(post_dict)
-    return {"data":post_dict}
-
-""" Validation Long version
-@app.get("/posts/{id}")
-def get_post(id:int, response: Response): # fastapi converts into into :int
-    post =  get_single_post_by_id(int(id)) # no need to convert to int here as argument conversion by fastapi above
-    if not post:
-        # response.status_code = 404  this is manual way, but import status from fast...
-        response.status_code = status.HTTP_404_NOT_FOUND
-        return{"message": f"Post with ID:{id} was not found."}
-    print(post)
-    return{"Post Detail":post}
-"""    
+    cursor.execute(""" INSERT INTO posts (title, content, published) VALUES (%s, %s, %s)RETURNING * """, 
+                   (post.title, post.content, post.published))
+    conn.commit()
+    new_post = cursor.fetchone()
+    return {"data":new_post}
 
 @app.get("/posts/{id}")
 def get_post(id:int): # fastapi converts into into :int
-    post =  get_single_post_by_id(int(id)) # no need to convert to int here as argument conversion by fastapi above
+    cursor.execute(""" SELECT * from posts WHERE id = %s """, (str(id),))
+    post = cursor.fetchone()
+    
+    
     if not post:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Post with ID:{id} was not found.")
     # print(post)
@@ -73,61 +87,27 @@ def get_post(id:int): # fastapi converts into into :int
 
 @app.delete("/posts/{id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_post(id:int): # fastapi converts into into :int
-    post =  delete_single_post_by_id(id) # no need to convert to int here as argument conversion by fastapi above
-    index = delete_single_post_by_id(id)
-    print(f"index in del {post}")
+    cursor.execute(""" DELETE from posts WHERE id = %s RETURNING * """, (str(id),))
+    post = cursor.fetchone()
+    conn.commit()
     if not post:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Post with ID:{id} was not found.")
-
-    
-    fake_post_data.pop(post)
-
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-# @app.put("/posts/{id}")
-# def update_post(id:int, post:Post): # fastapi converts into into :int
-#     post =  get_single_post_by_id(int(id)) # no need to convert to int here as argument conversion by fastapi above
-    
-#     print(post.model_dump())
-#     post_dict = post.model_dump()
-#     print(post)
-#     if not post:
-#         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Post with ID:{id} was not found.")
-#     # post_dict = post.model_dump_json()
-#     # post_dict["id"] == id
-#     # fake_post_data[post] == post_dict
 
-    
-#     return{"Post Detail":post}
-
-
-# @app.put("/posts/{id}")
-# def update_post(post: Post, id: int):
-#     for post in fake_post_data:
-#         if post['id'] == id:
-#             print(post["title"])
-#             if post['title'] is not None:
-#                 post['title']  = post['title'] 
-#             if post['content'] is not None:
-#                 post['content']  = post['content'] 
-            
-#                 return post['title'] 
-#         raise HTTPException(status_code=404, detail=f"Could not find post with id: {id}")
-    
 
 @app.put("/posts/{id}")
 def update_post(post: Post, id: int):
-     if not post:
-#         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Post with ID:{id} was not found.")
-        index = get_single_post_by_id(id)
-        # print(post.model_dump())    
-        post_dict = post.model_dump()  
-        print(post_dict)
-        index =  delete_single_post_by_id(id)
-        post_dict['id'] = id
-        fake_post_data[index] = post_dict
+    cursor.execute(""" UPDATE posts SET title = %s, content = %s, published = %s WHERE id = %s RETURNING * """, 
+                      (post.title, post.content, post.published, str(id)))
+    post = cursor.fetchone()
+    conn.commit()
+    if not post:
+         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, 
+                             detail=f"Post with ID:{id} was not found.")
+ 
 
-        print(post_dict)
-        return 
+    
+    return post
