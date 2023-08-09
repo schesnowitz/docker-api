@@ -8,3 +8,11 @@ class PostBaseClass(BaseModel):
 
 class PostCreateUpdate(PostBaseClass):
     pass
+
+class PostResponse(PostBaseClass):
+    title: str
+    content: str
+    time_created: bool
+
+    class Config:
+        from_attributes = True
